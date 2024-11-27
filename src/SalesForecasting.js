@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import * as tf from '@tensorflow/tfjs';
 import { Line } from 'react-chartjs-2';
 import { Chart as ChartJS, CategoryScale, LinearScale, LineElement, PointElement, Title, Tooltip, Legend } from 'chart.js';
@@ -24,16 +24,32 @@ const SalesForecasting = ({ data }) => {
       return { inputs: [], outputs: [], productMapping: {} };
     }
 
-    const salesDates = data.map((row) => new Date(row.sales_date).getMonth() + 1);
+    console.log('Raw input data:', data);
+
+    // Map dates and products to numeric representations
+    const salesDates = data.map((row) => {
+      const date = new Date(row.sales_date);
+      return !isNaN(date) ? date.getMonth() + 1 : null; // Extract month as a numeric value
+    });
+
     const products = [...new Set(data.map((row) => row.product_description))];
     const productMapping = Object.fromEntries(products.map((p, i) => [p, i]));
-    const quantities = data.map((row) => row.quantity_sold);
 
-    const inputs = data.map((row, i) => [
-      salesDates[i],
-      productMapping[row.product_description],
-    ]);
-    const outputs = quantities.map((q) => [q]);
+    const quantities = data.map((row) => parseFloat(row.quantity_sold) || 0);
+
+    // Validate and prepare inputs and outputs
+    const inputs = data.map((row, i) => {
+      if (salesDates[i] !== null && productMapping[row.product_description] !== undefined) {
+        return [salesDates[i], productMapping[row.product_description]];
+      }
+      return null; // Skip invalid rows
+    }).filter((input) => input !== null);
+
+    const outputs = quantities.filter((q, i) => inputs[i] !== null);
+
+    console.log('Processed inputs:', inputs);
+    console.log('Processed outputs:', outputs);
+    console.log('Product mapping:', productMapping);
 
     return { inputs, outputs, productMapping };
   };
@@ -56,12 +72,16 @@ const SalesForecasting = ({ data }) => {
       return;
     }
 
+    // Convert data to tensors
     const xs = tf.tensor2d(inputs, [inputs.length, inputs[0].length]);
     const ys = tf.tensor2d(outputs, [outputs.length, 1]);
 
     const model = buildModel();
+    console.log('Training the model...');
     await model.fit(xs, ys, { epochs: 50 });
+    console.log('Model training complete.');
 
+    // Generate predictions
     const predictions = [];
     for (let i = 1; i <= 6; i++) {
       Object.keys(productMapping).forEach((product) => {
@@ -79,6 +99,7 @@ const SalesForecasting = ({ data }) => {
       });
     }
 
+    console.log('Predictions:', predictions);
     visualizeResults(predictions);
   };
 
@@ -103,7 +124,26 @@ const SalesForecasting = ({ data }) => {
   return (
     <div>
       <button onClick={trainAndPredict}>Train & Predict</button>
-      {chartData && <Line data={chartData} />}
+      {chartData && (
+        <div style={{ width: '800px', height: '500px', margin: 'auto' }}>
+          <Line
+            data={chartData}
+            options={{
+              maintainAspectRatio: false,
+              responsive: true,
+              plugins: {
+                legend: {
+                  position: 'top',
+                },
+                title: {
+                  display: true,
+                  text: 'Sales Forecast',
+                },
+              },
+            }}
+          />
+        </div>
+      )}
     </div>
   );
 };
