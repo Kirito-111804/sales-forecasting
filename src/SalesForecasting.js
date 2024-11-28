@@ -124,6 +124,7 @@ const SalesForecasting = ({ data }) => {
         .map((p) => p.predicted), // Map predicted values
       borderColor: `#${Math.floor(Math.random() * 16777215).toString(16)}`, // Generate random color for each dataset
       fill: false, // Do not fill under the line
+      tension: 0.4, // Set the tension for curvature (values between 0 and 1)
     }));
 
     // Update chart data state
