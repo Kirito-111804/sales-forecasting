@@ -1,4 +1,3 @@
-// Import necessary libraries and components
 import React, { useState } from 'react'; // React and useState for state management
 import * as tf from '@tensorflow/tfjs'; // TensorFlow.js for machine learning
 import { Line } from 'react-chartjs-2'; // Chart.js component for rendering line charts
@@ -27,6 +26,8 @@ ChartJS.register(
 // Define the SalesForecasting component
 const SalesForecasting = ({ data }) => {
   const [chartData, setChartData] = useState(null); // State to hold chart data
+  const [searchTerm, setSearchTerm] = useState(''); // State to hold the search input
+  const [filteredPredictions, setFilteredPredictions] = useState([]); // State to store filtered predictions
 
   // Function to preprocess input data for the model
   const preprocessData = () => {
@@ -114,18 +115,59 @@ const SalesForecasting = ({ data }) => {
     visualizeResults(predictions); // Visualize the predictions
   };
 
+  // Function to filter predictions based on the search term (product name)
+  const handleSearchChange = (event) => {
+    setSearchTerm(event.target.value); // Update search term on input change
+  };
+
+  // Function to filter predictions based on search
+  const filterPredictions = (predictions) => {
+    if (!searchTerm) return predictions; // If no search term, return all predictions
+
+    return predictions.filter((prediction) =>
+      prediction.product.toLowerCase().includes(searchTerm.toLowerCase()) // Filter based on product name
+    );
+  };
+
   // Function to visualize predictions using Chart.js
   const visualizeResults = (predictions) => {
-    const products = [...new Set(predictions.map((p) => p.product))]; // Get unique products
-    const datasets = products.map((product) => ({
-      label: product, // Label for the product
-      data: predictions
-        .filter((p) => p.product === product) // Filter predictions for the product
-        .map((p) => p.predicted), // Map predicted values
-      borderColor: `#${Math.floor(Math.random() * 16777215).toString(16)}`, // Generate random color for each dataset
-      fill: false, // Do not fill under the line
-      tension: 0.4, // Set the tension for curvature (values between 0 and 1)
+    const filtered = filterPredictions(predictions); // Filter predictions based on search term
+
+    const products = [...new Set(filtered.map((p) => p.product))]; // Get unique products from filtered predictions
+
+    // Get actual sales data for the last 6 months (for comparison)
+    const actualSales = products.map((product) => {
+      return Array.from({ length: 6 }, (_, month) => {
+        // Find the actual sales for each month
+        const salesData = data.filter((row) => {
+          const date = new Date(row.sales_date);
+          return row.product_description === product && date.getMonth() + 1 === month + 1;
+        });
+        return salesData.length > 0 ? salesData[0].quantity_sold : 0; // Default to 0 if no sales data
+      });
+    });
+
+    const datasets = products.map((product, idx) => ({
+      label: `${product} (Predicted)`,
+      data: filtered
+        .filter((p) => p.product === product)
+        .map((p) => p.predicted),
+      borderColor: `#${Math.floor(Math.random() * 16777215).toString(16)}`,
+      fill: false,
+      tension: 0.4,
     }));
+
+    // Add the actual sales data line for each product
+    products.forEach((product, idx) => {
+      datasets.push({
+        label: `${product} (Actual)`,
+        data: actualSales[idx], // Actual sales data
+        borderColor: `#${Math.floor(Math.random() * 16777215).toString(16)}`, // Random color
+        borderDash: [5, 5], // Dashed line for actual sales
+        fill: false,
+        tension: 0.4,
+      });
+    });
 
     // Update chart data state
     setChartData({
@@ -136,11 +178,21 @@ const SalesForecasting = ({ data }) => {
 
   return (
     <div>
+      {/* Search input for filtering products */}
+      <input
+        type="text"
+        placeholder="Search for a product"
+        value={searchTerm}
+        onChange={handleSearchChange} // Handle search input change
+        style={{ margin: '20px 0', padding: '10px', fontSize: '16px' }}
+      />
+      
       {/* Button to trigger training and prediction */}
       <button onClick={trainAndPredict}>Train & Predict</button>
+
       {/* Render the chart if data is available */}
       {chartData && (
-        <div style={{ width: '800px', height: '500px', margin: 'auto' }}>
+        <div style={{ width: '1500px', height: '1000px', margin: 'auto' }}>
           <Line
             data={chartData} // Chart data
             options={{
