@@ -1,0 +1,207 @@
+// Import necessary libraries and components
+import React, { useState } from 'react'; // React and useState for state management
+import * as tf from '@tensorflow/tfjs'; // TensorFlow.js for machine learning
+import { Line } from 'react-chartjs-2'; // Chart.js component for rendering line charts
+import {
+  Chart as ChartJS, // Base Chart.js object
+  CategoryScale, // Category scale for x-axis
+  LinearScale, // Linear scale for y-axis
+  LineElement, // Line element for line charts
+  PointElement, // Points on the line chart
+  Title, // Chart title
+  Tooltip, // Tooltips for interaction
+  Legend // Legend for datasets
+} from 'chart.js';
+
+// Register necessary Chart.js components
+ChartJS.register(
+  CategoryScale,
+  LinearScale,
+  LineElement,
+  PointElement,
+  Title,
+  Tooltip,
+  Legend
+);
+
+// Define the SalesForecasting component
+const SalesForecasting = ({ data }) => {
+  const [chartData, setChartData] = useState(null); // State to hold chart data
+  const [selectedProduct, setSelectedProduct] = useState(''); // State for selected product
+
+  // Function to preprocess input data for the model
+  const preprocessData = () => {
+    if (!data || data.length === 0) { // Handle empty or undefined data
+      console.error('Data is empty or undefined');
+      return { inputs: [], outputs: [], productMapping: {}, actualSales: {} }; // Return empty placeholders
+    }
+
+    console.log('Raw input data:', data);
+
+    // Extract numeric representations of sales dates (months) and map product descriptions to indices
+    const salesDates = data.map((row) => {
+      const date = new Date(row.sales_date);
+      return !isNaN(date) ? date.getMonth() + 1 : null; // Extract the month, ignoring invalid dates
+    });
+
+    const products = [...new Set(data.map((row) => row.product_description))]; // Unique product descriptions
+    const productMapping = Object.fromEntries(products.map((p, i) => [p, i])); // Map products to numeric indices
+
+    const quantities = data.map((row) => parseFloat(row.quantity_sold) || 0); // Parse quantities as numbers
+
+    // Prepare input and output arrays
+    const inputs = data.map((row, i) => {
+      if (salesDates[i] !== null && productMapping[row.product_description] !== undefined) {
+        return [salesDates[i], productMapping[row.product_description]]; // Use month and product index as inputs
+      }
+      return null; // Skip invalid rows
+    }).filter((input) => input !== null); // Remove null values
+
+    const outputs = quantities.filter((q, i) => inputs[i] !== null); // Outputs corresponding to valid inputs
+
+    // Create actual sales data by product and month
+    const actualSales = products.reduce((acc, product) => {
+      acc[product] = Array(12).fill(0); // Initialize sales data for each product
+      return acc;
+    }, {});
+
+    data.forEach((row) => {
+      const month = new Date(row.sales_date).getMonth();
+      if (row.product_description in actualSales) {
+        actualSales[row.product_description][month] += parseFloat(row.quantity_sold) || 0;
+      }
+    });
+
+    console.log('Processed inputs:', inputs);
+    console.log('Processed outputs:', outputs);
+    console.log('Product mapping:', productMapping);
+    console.log('Actual sales data:', actualSales);
+
+    return { inputs, outputs, productMapping, actualSales }; // Return preprocessed data
+  };
+
+  // Function to build the TensorFlow.js model
+  const buildModel = () => {
+    const model = tf.sequential(); // Create a sequential model
+    model.add(tf.layers.dense({ units: 10, activation: 'relu', inputShape: [2] })); // First dense layer
+    model.add(tf.layers.dense({ units: 1 })); // Output layer
+    model.compile({ optimizer: 'adam', loss: 'meanSquaredError' }); // Compile the model with optimizer and loss function
+    return model;
+  };
+
+  // Function to train the model and generate predictions
+  const trainAndPredict = async () => {
+    const { inputs, outputs, productMapping, actualSales } = preprocessData(); // Preprocess the data
+
+    if (inputs.length === 0 || outputs.length === 0) { // Ensure valid inputs and outputs
+      console.error('Invalid input or output data');
+      return;
+    }
+
+    // Convert input and output data to tensors
+    const xs = tf.tensor2d(inputs, [inputs.length, inputs[0].length]);
+    const ys = tf.tensor2d(outputs, [outputs.length, 1]);
+
+    const model = buildModel(); // Build the model
+    console.log('Training the model...');
+    await model.fit(xs, ys, { epochs: 50 }); // Train the model with 50 epochs
+    console.log('Model training complete.');
+
+    // Generate predictions for the next 6 months
+    const predictions = [];
+    for (let i = 1; i <= 6; i++) { // Loop through the next 6 months
+      Object.keys(productMapping).forEach((product) => { // Loop through each product
+        const predictionTensor = model.predict(
+          tf.tensor2d([[i, productMapping[product]]]) // Predict sales for each product in the given month
+        );
+        const predictedValue = predictionTensor.dataSync()[0]; // Extract the prediction value
+        predictionTensor.dispose(); // Dispose of tensor to free memory
+
+        predictions.push({
+          product, // Product name
+          sales_date: i, // Month number
+          predicted: predictedValue, // Predicted sales value
+        });
+      });
+    }
+
+    console.log('Predictions:', predictions);
+    visualizeResults(predictions, actualSales); // Visualize the predictions with actual sales
+  };
+
+  // Function to visualize predictions using Chart.js
+  const visualizeResults = (predictions, actualSales) => {
+    const products = [...new Set(predictions.map((p) => p.product))]; // Get unique products
+    const filteredPredictions = selectedProduct
+      ? predictions.filter((p) => p.product === selectedProduct) // Filter predictions by selected product
+      : predictions; // If no product is selected, show all
+
+    const datasets = products.map((product) => ({
+      label: `${product} Predicted`, // Label for the product's predicted sales
+      data: filteredPredictions
+        .filter((p) => p.product === product) // Filter predictions for the product
+        .map((p) => p.predicted), // Map predicted values
+      borderColor: `#${Math.floor(Math.random() * 16777215).toString(16)}`, // Generate random color for each dataset
+      fill: false, // Do not fill under the line
+      tension: 0.4, // Set the tension for curvature (values between 0 and 1)
+    }));
+
+    // Add actual sales data for the selected product
+    if (selectedProduct) {
+      datasets.push({
+        label: `${selectedProduct} Actual`, // Label for the product's actual sales
+        data: actualSales[selectedProduct], // Actual sales data
+        borderColor: 'rgba(0, 123, 255, 1)', // Blue color for actual sales
+        fill: false,
+        tension: 0.4,
+        borderWidth: 2,
+        pointRadius: 3,
+      });
+    }
+
+    // Update chart data state
+    setChartData({
+      labels: Array.from({ length: 6 }, (_, i) => `Month ${i + 1}`), // Labels for the x-axis
+      datasets, // Data for the chart
+    });
+  };
+
+  return (
+    <div>
+      {/* Button to trigger training and prediction */}
+      <button onClick={trainAndPredict}>Train & Predict</button>
+
+      {/* Buttons to filter chart by product */}
+      <div style={{ margin: '10px 0' }}>
+        <button onClick={() => setSelectedProduct('Product A')}>Product A</button>
+        <button onClick={() => setSelectedProduct('Product B')}>Product B</button>
+        <button onClick={() => setSelectedProduct('')}>All Products</button>
+      </div>
+
+      {/* Render the chart if data is available */}
+      {chartData && (
+        <div style={{ width: '800px', height: '500px', margin: 'auto' }}>
+          <Line
+            data={chartData} // Chart data
+            options={{
+              maintainAspectRatio: false, // Disable aspect ratio
+              responsive: true, // Make chart responsive
+              plugins: {
+                legend: {
+                  position: 'top', // Legend position
+                },
+                title: {
+                  display: true, // Display title
+                  text: 'Sales Forecast', // Title text
+                },
+              },
+            }}
+          />
+        </div>
+      )}
+    </div>
+  );
+};
+
+// Export the component for use in other parts of the application
+export default SalesForecasting;
